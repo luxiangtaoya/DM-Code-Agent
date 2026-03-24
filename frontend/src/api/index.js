@@ -233,7 +233,7 @@ export const executionApi = {
   getWsUrl(executionId) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsHost = process.env.VUE_APP_WS_HOST || window.location.hostname
-    const wsPort = process.env.VUE_APP_WS_PORT || 8001
+    const wsPort = process.env.VUE_APP_WS_PORT || 8080
     return `${wsProtocol}//${wsHost}:${wsPort}/api/v1/ws/executions/${executionId}`
   },
 

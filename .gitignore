@@ -83,11 +83,9 @@ logs/
 *.sqlite
 *.sqlite3
 
-# 数据文件（保留结构，忽略内容）
-backend/data/screenshots/*
-backend/data/uploads/*
-!backend/data/screenshots/.gitkeep
-!backend/data/uploads/.gitkeep
+# 数据目录（保留结构，忽略内容）
+backend/data/*
+!backend/data/.gitkeep
 
 # 临时文件
 *.tmp
