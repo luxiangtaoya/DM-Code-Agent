@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI测试平台（简化版）</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-ui@2.15.13/lib/theme-chalk/index.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; }
+        #app { min-height: 100vh; }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 0;
+        }
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo { font-size: 24px; font-weight: bold; }
+
+        .main-content {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .card-title { font-size: 18px; font-weight: 600; color: #333; }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <div class="header-content">
+                <div class="logo">🤖 AI测试平台</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">创建新项目</span>
+                </div>
+                <el-form inline @submit.native.prevent="createProject">
+                    <el-form-item label="项目名称">
+                        <el-input v-model="newProject.name" placeholder="请输入项目名称" style="width: 300px;"></el-input>
+                    </el-form-item>
+                    <el-form-item label="项目描述">
+                        <el-input v-model="newProject.description" placeholder="请输入项目描述（可选）" style="width: 400px;"></el-input>
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button type="primary" native-type="submit" :loading="creating">创建项目</el-button>
+                    </el-form-item>
+                </el-form>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">我的项目</span>
+                </div>
+                <el-row :gutter="20">
+                    <el-col :span="8" v-for="project in projects" :key="project.id">
+                        <div class="card" style="cursor: pointer;" @click="selectProject(project)">
+                            <h3>{{ project.name }}</h3>
+                            <p style="color: #666; margin: 10px 0;">{{ project.description || '暂无描述' }}</p>
+                            <p style="color: #999; font-size: 12px;">📝 {{ project.test_case_count }} 个用例</p>
+                        </div>
+                    </el-col>
+                </el-row>
+                <div class="empty-state" v-if="projects.length === 0">
+                    <p>还没有项目，创建一个开始吧！</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/element-ui@2.15.13/lib/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        console.log('脚本开始执行');
+
+        new Vue({
+            el: '#app',
+            data() {
+                console.log('data 函数执行');
+                return {
+                    projects: [],
+                    newProject: { name: '', description: '' },
+                    creating: false
+                };
+            },
+            mounted() {
+                console.log('mounted 执行');
+                this.loadProjects();
+            },
+            methods: {
+                async loadProjects() {
+                    console.log('loadProjects 执行');
+                    try {
+                        const res = await axios.get('/api/projects');
+                        console.log('API 响应:', res.data);
+                        this.projects = res.data.data;
+                    } catch (error) {
+                        console.error('加载项目失败:', error);
+                        this.$message.error('加载项目失败');
+                    }
+                },
+                async createProject() {
+                    if (!this.newProject.name.trim()) {
+                        this.$message.warning('请输入项目名称');
+                        return;
+                    }
+                    this.creating = true;
+                    try {
+                        const res = await axios.post('/api/projects', this.newProject);
+                        this.projects.push(res.data.data);
+                        this.newProject = { name: '', description: '' };
+                        this.$message.success('项目创建成功');
+                    } catch (error) {
+                        console.error('创建失败:', error);
+                        this.$message.error('创建项目失败');
+                    } finally {
+                        this.creating = false;
+                    }
+                },
+                selectProject(project) {
+                    console.log('选择项目:', project);
+                    this.$message.info('选择了项目: ' + project.name);
+                }
+            }
+        });
+
+        console.log('Vue 实例创建完成');
+    </script>
+</body>
+</html>

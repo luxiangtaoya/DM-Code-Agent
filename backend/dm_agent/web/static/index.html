@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DM Code Agent - Web Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .task-input-section {
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .progress-section {
+            margin-top: 20px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .status-running {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .steps-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+
+        .step-item {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+            transition: background 0.2s;
+        }
+
+        .step-item:hover {
+            background: #f8f9fa;
+        }
+
+        .step-item:last-child {
+            border-bottom: none;
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .step-number {
+            background: #667eea;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .step-action {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .step-abbreviation {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .step-thought {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .step-observation {
+            color: #28a745;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .step-latest {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+        }
+
+        .gif-section {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .gif-section img {
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+
+        .final-answer {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            border-left: 4px solid #4caf50;
+        }
+
+        .final-answer h3 {
+            color: #2e7d32;
+            margin-bottom: 10px;
+        }
+
+        .error-message {
+            margin-top: 20px;
+            padding: 15px;
+            background: #ffebee;
+            border-radius: 8px;
+            border-left: 4px solid #f44336;
+            color: #c62828;
+        }
+
+        .toggle-config {
+            cursor: pointer;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .config-section {
+            display: none;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .config-section.show {
+            display: block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="container">
+        <div class="header">
+            <h1>🤖 DM Code Agent</h1>
+            <p>智能浏览器自动化任务执行平台</p>
+        </div>
+
+        <div class="card">
+            <h2>创建新任务</h2>
+
+            <div class="task-input-section">
+                <div class="form-group">
+                    <label>任务描述</label>
+                    <textarea 
+                        v-model="taskInput" 
+                        placeholder="请输入要执行的任务，例如：打开 https://example.com 并截图"
+                        :disabled="isRunning"
+                    ></textarea>
+                </div>
+
+                <div class="toggle-config" @click="showConfig = !showConfig">
+                    {{ showConfig ? '▼' : '▶' }} 高级配置
+                </div>
+
+                <div class="config-section" :class="{ show: showConfig }">
+                    <div class="form-group">
+                        <label>模型提供商</label>
+                        <select v-model="config.provider" :disabled="isRunning">
+                            <option value="qwen">Qwen (通义千问)</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="claude">Claude</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>模型名称</label>
+                        <input 
+                            v-model="config.model" 
+                            placeholder="例如: qwen3.5-flash, gpt-4"
+                            :disabled="isRunning"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input 
+                            v-model="config.apiKey" 
+                            type="password"
+                            placeholder="输入 API Key（留空使用环境变量）"
+                            :disabled="isRunning"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>Base URL</label>
+                        <input 
+                            v-model="config.baseUrl" 
+                            placeholder="例如: https://api.openai.com/v1"
+                            :disabled="isRunning"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>最大步骤数</label>
+                        <input 
+                            v-model="config.maxSteps" 
+                            type="number"
+                            :disabled="isRunning"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>启用截图</label>
+                        <select v-model="config.enableScreenshots" :disabled="isRunning">
+                            <option :value="true">是</option>
+                            <option :value="false">否</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button 
+                    class="btn" 
+                    @click="startTask"
+                    :disabled="isRunning || !taskInput.trim()"
+                >
+                    {{ isRunning ? '🔄 执行中...' : '🚀 开始执行' }}
+                </button>
+
+                <button 
+                    class="btn btn-secondary" 
+                    @click="clearTask"
+                    :disabled="isRunning"
+                    v-if="taskStatus"
+                >
+                    🗑️ 清除任务
+                </button>
+            </div>
+        </div>
+
+        <div class="card" v-if="taskStatus">
+            <div class="status-badge" :class="'status-' + taskStatus.status">
+                {{ getStatusText(taskStatus.status) }}
+            </div>
+
+            <div class="progress-section">
+                <div class="progress-bar-container">
+                    <div 
+                        class="progress-bar" 
+                        :style="{ width: progressPercentage + '%' }"
+                    >
+                        {{ progressPercentage.toFixed(1) }}%
+                    </div>
+                </div>
+
+                <div>
+                    <strong>当前步骤:</strong> {{ taskStatus.current_step }} / {{ taskStatus.total_steps }}
+                </div>
+            </div>
+
+            <div v-if="taskStatus.steps.length > 0" style="margin-top: 20px;">
+                <h3>执行步骤 <span style="font-size: 14px; color: #666;">(共 {{ taskStatus.steps.length }} 步)</span></h3>
+                <div class="steps-list" ref="stepsList">
+                    <div 
+                        class="step-item" 
+                        v-for="(step, index) in taskStatus.steps" 
+                        :key="index"
+                        :class="{ 'step-latest': index === taskStatus.steps.length - 1 }"
+                    >
+                        <div class="step-header">
+                            <span class="step-number">步骤 {{ step.step_num }}</span>
+                            <span class="step-action">{{ step.action }}</span>
+                        </div>
+                        <div class="step-abbreviation">{{ step.step_abbreviation }}</div>
+                        <div class="step-thought">{{ step.thought }}</div>
+                        <div class="step-observation">{{ step.observation }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="taskStatus.gif_path" class="gif-section">
+                <h3>任务动画</h3>
+                <img :src="'/api/tasks/' + taskStatus.task_id + '/gif'" alt="Task Animation">
+            </div>
+
+            <div v-if="taskStatus.final_answer" class="final-answer">
+                <h3>✅ 最终答案</h3>
+                <p>{{ taskStatus.final_answer }}</p>
+            </div>
+
+            <div v-if="taskStatus.error_message" class="error-message">
+                <h3>❌ 错误</h3>
+                <p>{{ taskStatus.error_message }}</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    taskInput: '',
+                    showConfig: false,
+                    isRunning: false,
+                    websocket: null,
+                    taskStatus: null,
+                    config: {
+                        provider: 'qwen',
+                        model: 'qwen3.5-flash',
+                        apiKey: '',
+                        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                        maxSteps: 100,
+                        enableScreenshots: true
+                    }
+                };
+            },
+            computed: {
+                progressPercentage() {
+                    if (!this.taskStatus || this.taskStatus.total_steps === 0) {
+                        return 0;
+                    }
+                    return (this.taskStatus.current_step / this.taskStatus.total_steps) * 100;
+                }
+            },
+            methods: {
+                async startTask() {
+                    if (!this.taskInput.trim()) {
+                        alert('请输入任务描述');
+                        return;
+                    }
+
+                    this.isRunning = true;
+                    this.taskStatus = null;
+
+                    try {
+                        const response = await axios.post('/api/tasks', {
+                            task: this.taskInput,
+                            provider: this.config.provider,
+                            model: this.config.model,
+                            api_key: this.config.apiKey || null,
+                            base_url: this.config.baseUrl,
+                            max_steps: this.config.maxSteps,
+                            enable_screenshots: this.config.enableScreenshots
+                        });
+
+                        const taskId = response.data.task_id;
+                        this.connectWebSocket(taskId);
+                    } catch (error) {
+                        console.error('启动任务失败:', error);
+                        alert('启动任务失败: ' + (error.response?.data?.detail || error.message));
+                        this.isRunning = false;
+                    }
+                },
+
+                connectWebSocket(taskId) {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/${taskId}`;
+
+                    this.websocket = new WebSocket(wsUrl);
+
+                    this.websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+
+                        switch (data.type) {
+                            case 'task_started':
+                                if (!this.taskStatus) {
+                                    this.taskStatus = {
+                                        task_id: data.data.task_id,
+                                        task: data.data.task,
+                                        status: 'running',
+                                        current_step: 0,
+                                        total_steps: 100,
+                                        steps: [],
+                                        gif_path: null,
+                                        error_message: null,
+                                        final_answer: null
+                                    };
+                                }
+                                break;
+                            case 'mcp_started':
+                                console.log('MCP 服务器已启动:', data.data);
+                                break;
+                            case 'status_update':
+                                this.taskStatus = data.data;
+                                break;
+                            case 'step_update':
+                                if (this.taskStatus) {
+                                    if (!this.taskStatus.steps) {
+                                        this.taskStatus.steps = [];
+                                    }
+                                    this.taskStatus.steps.push(data.data);
+                                    this.taskStatus.current_step = data.data.step_num;
+
+                                    // 自动滚动到最新步骤
+                                    this.$nextTick(() => {
+                                        if (this.$refs.stepsList) {
+                                            const stepItems = this.$refs.stepsList.querySelectorAll('.step-item');
+                                            if (stepItems.length > 0) {
+                                                stepItems[stepItems.length - 1].scrollIntoView({
+                                                    behavior: 'smooth',
+                                                    block: 'end'
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                                break;
+                            case 'task_completed':
+                                if (this.taskStatus) {
+                                    this.taskStatus.status = 'completed';
+                                    this.taskStatus.final_answer = data.data.final_answer;
+                                    this.taskStatus.gif_path = data.data.gif_path;
+                                }
+                                this.isRunning = false;
+                                break;
+                            case 'task_failed':
+                                if (this.taskStatus) {
+                                    this.taskStatus.status = 'failed';
+                                    this.taskStatus.error_message = data.data.error_message;
+                                }
+                                this.isRunning = false;
+                                break;
+                        }
+                    };
+
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket 错误:', error);
+                        this.isRunning = false;
+                    };
+
+                    this.websocket.onclose = () => {
+                        if (this.isRunning) {
+                            console.log('WebSocket 连接已关闭');
+                            this.isRunning = false;
+                        }
+                    };
+                },
+
+                clearTask() {
+                    if (this.websocket) {
+                        this.websocket.close();
+                    }
+                    this.taskStatus = null;
+                    this.taskInput = '';
+                },
+
+                getStatusText(status) {
+                    const statusMap = {
+                        'running': '🔄 执行中',
+                        'completed': '✅ 已完成',
+                        'failed': '❌ 失败'
+                    };
+                    return statusMap[status] || status;
+                }
+            },
+            beforeUnmount() {
+                if (this.websocket) {
+                    this.websocket.close();
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Element UI 测试</title>
+    <!-- Element UI CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-ui@2.15.13/lib/theme-chalk/index.css">
+    <style>
+        body { padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div id="app" class="container">
+        <h1>Element UI 组件测试</h1>
+
+        <div class="card">
+            <h2>按钮测试</h2>
+            <el-button>默认按钮</el-button>
+            <el-button type="primary">主要按钮</el-button>
+            <el-button type="success">成功按钮</el-button>
+            <el-button type="warning">警告按钮</el-button>
+            <el-button type="danger">危险按钮</el-button>
+        </div>
+
+        <div class="card">
+            <h2>表单测试</h2>
+            <el-form :model="form" label-width="80px">
+                <el-form-item label="项目名称">
+                    <el-input v-model="form.name" placeholder="请输入项目名称"></el-input>
+                </el-form-item>
+                <el-form-item label="项目描述">
+                    <el-input v-model="form.desc" type="textarea" placeholder="请输入项目描述"></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="submitForm">创建项目</el-button>
+                    <el-button @click="resetForm">重置</el-button>
+                </el-form-item>
+            </el-form>
+        </div>
+
+        <div class="card">
+            <h2>消息提示测试</h2>
+            <el-button @click="showMessage">显示消息</el-button>
+            <el-button type="success" @click="showSuccess">显示成功</el-button>
+            <el-button type="warning" @click="showWarning">显示警告</el-button>
+            <el-button type="danger" @click="showError">显示错误</el-button>
+        </div>
+
+        <div class="card">
+            <h2>数据展示</h2>
+            <p>项目名称: {{ form.name }}</p>
+            <p>项目描述: {{ form.desc }}</p>
+            <p>计数器: {{ count }}</p>
+            <el-button @click="count++">增加计数</el-button>
+        </div>
+    </div>
+
+    <!-- Vue -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.min.js"></script>
+    <!-- Element UI JS -->
+    <script src="https://cdn.jsdelivr.net/npm/element-ui@2.15.13/lib/index.js"></script>
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+    <script>
+        console.log('页面加载完成');
+        console.log('Vue:', typeof Vue);
+        console.log('ELEMENT:', typeof ELEMENT);
+
+        new Vue({
+            el: '#app',
+            data() {
+                return {
+                    form: {
+                        name: '',
+                        desc: ''
+                    },
+                    count: 0
+                };
+            },
+            methods: {
+                submitForm() {
+                    console.log('提交表单:', this.form);
+                    this.$message.success('项目创建成功！');
+                },
+                resetForm() {
+                    this.form = {
+                        name: '',
+                        desc: ''
+                    };
+                    this.$message.info('表单已重置');
+                },
+                showMessage() {
+                    this.$message('这是一条消息');
+                },
+                showSuccess() {
+                    this.$message.success('操作成功');
+                },
+                showWarning() {
+                    this.$message.warning('这是一条警告');
+                },
+                showError() {
+                    this.$message.error('这是一条错误');
+                }
+            },
+            mounted() {
+                console.log('Vue 实例已挂载');
+                console.log('Element UI 可用:', typeof this.$message !== 'undefined');
+            }
+        });
+    </script>
+</body>
+</html>
