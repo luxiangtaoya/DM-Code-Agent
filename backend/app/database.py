@@ -116,6 +116,18 @@ def init_database():
         cursor.execute("ALTER TABLE test_cases ADD COLUMN gif_path TEXT")
     except:
         pass
+    try:
+        cursor.execute("ALTER TABLE test_cases ADD COLUMN script_path TEXT")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE test_cases ADD COLUMN network_path TEXT")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE test_cases ADD COLUMN execution_options TEXT")
+    except:
+        pass
 
     # 创建索引（在添加列之后）
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_test_cases_priority ON test_cases(priority)")
@@ -143,6 +155,8 @@ def init_database():
             steps_log TEXT,
             screenshots TEXT,
             gif_path TEXT,
+            script_path TEXT,
+            network_path TEXT,
             model TEXT,
             provider TEXT,
             final_answer TEXT,
@@ -158,6 +172,14 @@ def init_database():
     # 添加 final_answer 列（如果不存在）
     try:
         cursor.execute("ALTER TABLE test_executions ADD COLUMN final_answer TEXT")
+    except:
+        pass  # 列已存在
+    try:
+        cursor.execute("ALTER TABLE test_executions ADD COLUMN script_path TEXT")
+    except:
+        pass  # 列已存在
+    try:
+        cursor.execute("ALTER TABLE test_executions ADD COLUMN network_path TEXT")
     except:
         pass  # 列已存在
 

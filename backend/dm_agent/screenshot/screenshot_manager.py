@@ -1,4 +1,4 @@
-"""截图管理模块 - 支持浏览器步骤截图、添加文字标注和生成GIF"""
+"""截图管理模块 - 支持浏览器步骤截图、添加文字标注和生成 GIF"""
 
 from __future__ import annotations
 
@@ -60,31 +60,22 @@ class ScreenshotManager:
 
     def add_screenshot(self, step_name: str, image_bytes: bytes) -> str:
         """
-        添加一张截图
+        添加一张截图（仅保存到内存用于生成 GIF，不保存为文件）
 
         Args:
             step_name: 步骤名称
             image_bytes: 图片字节数据
 
         Returns:
-            保存的截图路径
+            临时路径（仅用于兼容，实际不保存文件）
         """
         if self.task_id is None:
             raise RuntimeError("请先调用 start_task() 开始任务")
 
-        # 保存原始截图
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = step_name.replace(" ", "_").replace("/", "_")
-        filename = f"{timestamp}_{safe_name}.png"
-        filepath = os.path.join(self.output_dir, self.task_id, filename)
+        # 仅添加到内存列表，不保存为文件
+        self.screenshots.append((step_name, image_bytes, None))
 
-        with open(filepath, "wb") as f:
-            f.write(image_bytes)
-
-        # 添加到截图列表
-        self.screenshots.append((step_name, image_bytes, filepath))
-
-        return filepath
+        return f"[内存] {step_name}"
 
     def add_screenshot_from_base64(self, step_name: str, base64_data: str) -> str:
         """
@@ -153,14 +144,14 @@ class ScreenshotManager:
                     "/System/Library/Fonts/PingFang.ttc",  # macOS
                     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",  # Linux
                 ]
-                
+
                 for font_path in font_paths:
                     try:
                         font = ImageFont.truetype(font_path, font_size)
                         break
                     except:
                         continue
-                
+
                 if font is None:
                     try:
                         font = ImageFont.truetype("arial.ttf", font_size)
@@ -193,11 +184,7 @@ class ScreenshotManager:
 
             # 保存 GIF
             gif_path = os.path.join(self.output_dir, self.task_id, "task_animation.gif")
-            
-            print(f"🎬 正在生成 GIF...")
-            print(f"   截图数量: {len(images)}")
-            print(f"   保存路径: {os.path.abspath(gif_path)}")
-            
+
             images[0].save(
                 gif_path,
                 save_all=True,
@@ -205,17 +192,12 @@ class ScreenshotManager:
                 duration=self.gif_duration,
                 loop=0
             )
-            
-            print(f"✓ GIF 已成功保存: {os.path.abspath(gif_path)}")
 
             return gif_path
 
         except ImportError:
-            print("警告: 未安装 PIL/Pillow 库，无法生成 GIF")
-            print("请运行: pip install pillow")
             return None
         except Exception as e:
-            print(f"生成 GIF 时出错: {e}")
             return None
 
     def clear(self):

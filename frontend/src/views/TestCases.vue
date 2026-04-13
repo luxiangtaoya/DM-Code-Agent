@@ -341,7 +341,11 @@
         </el-form-item>
 
         <el-form-item label="执行选项">
-          <el-checkbox v-model="executeConfig.enableScreenshots">启用截图（生成执行GIF）</el-checkbox>
+          <div class="execute-options">
+            <el-checkbox v-model="executeConfig.enableScreenshots">启用截图（生成执行GIF）</el-checkbox>
+            <el-checkbox v-model="executeConfig.enableNetworkTrace">启用网络追踪</el-checkbox>
+            <el-checkbox v-model="executeConfig.enableScript">启用JS脚本生成</el-checkbox>
+          </div>
         </el-form-item>
 
         <el-divider></el-divider>
@@ -424,9 +428,63 @@
           </el-collapse>
         </div>
 
+        <!-- 网络请求独立展示 -->
+        <div v-if="networkTraceData && networkTraceData.steps && networkTraceData.steps.length > 0" class="network-section">
+          <h3>网络请求:</h3>
+          <el-collapse v-model="activeNetworkSteps">
+            <el-collapse-item
+              v-for="(step, sIndex) in getStepsWithNetworkRequests()"
+              :key="sIndex"
+              :name="sIndex">
+              <template slot="title">
+                <span class="step-number">步骤 {{ step.step_num }}:</span>
+                <span class="step-name">{{ step.step_name || '未知步骤' }}</span>
+                <el-tag size="mini" type="danger">{{ step.total_requests }} 个请求</el-tag>
+              </template>
+              <div class="network-list-full">
+                <div class="network-list-header">
+                  <el-switch
+                    v-model="showAllRequests[sIndex]"
+                    active-text="显示全部"
+                    inactive-text="仅 API"
+                    size="mini"
+                  />
+                  <span class="network-summary">
+                    共 {{ step.total_requests }} 个请求，
+                    其中 API 请求 {{ countApiRequests(step.requests) }} 个
+                  </span>
+                </div>
+                <div
+                  v-for="(req, rIdx) in step.requests"
+                  :key="rIdx"
+                  v-show="!req.is_filtered || showAllRequests[sIndex]"
+                  class="network-item"
+                >
+                  <span class="method-badge" :class="'method-' + req.method.toLowerCase()">{{ req.method }}</span>
+                  <span class="status-badge" :class="getStatusClass(req.status)">{{ req.status }}</span>
+                  <span class="request-url" :title="req.url">{{ req.short_url || req.url }}</span>
+                  <span class="request-duration" v-if="req.duration">{{ req.duration }}ms</span>
+                  <el-tag size="mini" :type="getCategoryTagType(req.category)">{{ getCategoryLabel(req.category) }}</el-tag>
+                  <el-button
+                    size="mini"
+                    type="info"
+                    @click="viewRequestDetail(req, sIndex, rIdx)">
+                    详情
+                  </el-button>
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+
         <div v-if="viewingLatestExecution.gif_path" class="detail-gif">
           <h3>执行 GIF:</h3>
           <img :src="getExecutionGif(viewingLatestExecution.gif_path)" alt="execution gif" />
+        </div>
+
+        <div v-if="viewingLatestExecution.script_path" class="detail-script">
+          <h3>回放脚本:</h3>
+          <el-button type="primary" size="small" @click="viewScript">查看 JS 脚本</el-button>
         </div>
 
         <div v-if="viewingLatestExecution.error_message" class="error-message">
@@ -450,11 +508,117 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 回放脚本对话框 -->
+    <el-dialog
+      title="回放脚本"
+      :visible.sync="showScriptDialog"
+      width="70%"
+      :close-on-click-modal="false">
+      <div v-loading="loadingScript" class="script-dialog-content">
+        <div class="script-toolbar">
+          <el-button size="small" @click="copyScript">
+            <i class="el-icon-document-copy"></i> 复制
+          </el-button>
+          <el-button size="small" @click="downloadScript">
+            <i class="el-icon-download"></i> 下载
+          </el-button>
+          <el-button type="success" size="small" :loading="executingScript" @click="executeScript">
+            <i class="el-icon-video-play" v-if="!executingScript"></i> {{ executingScript ? '执行中...' : '执行' }}
+          </el-button>
+        </div>
+        <pre class="script-content"><code>{{ viewingScript }}</code></pre>
+
+        <!-- 执行结果 -->
+        <div v-if="scriptExecuteResult" class="script-execute-result">
+          <el-alert
+            :type="scriptExecuteResult.status === 'success' ? 'success' : 'error'"
+            :title="scriptExecuteResult.status === 'success' ? '脚本执行成功' : '脚本执行失败'"
+            :closable="false"
+            show-icon>
+          </el-alert>
+          <div v-if="scriptExecuteResult.output" class="script-output">
+            <strong>输出：</strong>
+            <pre>{{ scriptExecuteResult.output }}</pre>
+          </div>
+          <div v-if="scriptExecuteResult.error" class="script-error">
+            <strong>错误：</strong>
+            <pre>{{ scriptExecuteResult.error }}</pre>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 网络请求详情对话框 -->
+    <el-dialog
+      title="网络请求详情"
+      :visible.sync="showRequestDetailDialog"
+      width="80%"
+      :close-on-click-modal="false">
+      <div v-if="selectedRequest" class="request-detail-dialog">
+        <!-- 基本信息 -->
+        <div class="detail-section">
+          <h4>基本信息</h4>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="请求 URL">
+              <span style="word-break: break-all;">{{ selectedRequest.url }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="请求方法">
+              <el-tag size="small" :class="'method-' + selectedRequest.method.toLowerCase()">
+                {{ selectedRequest.method }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="状态码">
+              <el-tag size="small" :class="getStatusClass(selectedRequest.status)">
+                {{ selectedRequest.status }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="MIME 类型">
+              {{ selectedRequest.mimeType || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="响应大小">
+              {{ selectedRequest.size ? (selectedRequest.size / 1024).toFixed(2) + ' KB' : '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="请求耗时">
+              {{ selectedRequest.duration ? selectedRequest.duration + ' ms' : '-' }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+
+        <!-- 请求头 -->
+        <div class="detail-section">
+          <h4>请求头</h4>
+          <pre v-if="selectedRequest.requestHeaders && Object.keys(selectedRequest.requestHeaders).length > 0" class="headers-content">{{ JSON.stringify(selectedRequest.requestHeaders, null, 2) }}</pre>
+          <el-empty v-else description="无请求头数据" :image-size="80"></el-empty>
+        </div>
+
+        <!-- 响应头 -->
+        <div class="detail-section">
+          <h4>响应头</h4>
+          <pre v-if="selectedRequest.responseHeaders && Object.keys(selectedRequest.responseHeaders).length > 0" class="headers-content">{{ JSON.stringify(selectedRequest.responseHeaders, null, 2) }}</pre>
+          <el-empty v-else description="无响应头数据" :image-size="80"></el-empty>
+        </div>
+
+        <!-- 请求体 -->
+        <div class="detail-section">
+          <h4>请求体</h4>
+          <pre v-if="selectedRequest.requestBody" class="body-content">{{ selectedRequest.requestBody }}</pre>
+          <el-empty v-else description="无请求体数据" :image-size="80"></el-empty>
+        </div>
+
+        <!-- 响应体 -->
+        <div class="detail-section">
+          <h4>响应体</h4>
+          <pre v-if="selectedRequest.responseBody" class="body-content">{{ selectedRequest.responseBody }}</pre>
+          <el-empty v-else description="无响应体数据（Playwright trace 仅保存文本类型响应）" :image-size="80"></el-empty>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { testCaseApi } from '@/api'
+import { testCaseApi, executionApi } from '@/api'
 import { mapState, mapGetters } from 'vuex'
 
 export default {
@@ -484,11 +648,23 @@ export default {
       showExcelUploadDialog: false,
       showExecuteDialog: false,
       showExecutionResultDialog: false,
+      showScriptDialog: false,
       isEdit: false,
       editingId: null,
       viewingCase: null,
       viewingLatestExecution: null,
+      viewingScript: '',
+      loadingScript: false,
+      executingScript: false,
+      scriptExecuteResult: null,
       activeSteps: [],
+      networkTraceData: null,
+      showAllRequests: {},
+      activeNetworkSteps: [],  // 网络请求折叠面板的展开状态
+      // 网络请求详情对话框
+      showRequestDetailDialog: false,
+      selectedRequest: null,
+      selectedRequestIndex: null,
       testCaseForm: {
         name: '',
         description: '',
@@ -505,7 +681,9 @@ export default {
       executeConfig: {
         model: 'qwen3.5-flash',
         provider: 'qwen',
-        enableScreenshots: true
+        enableScreenshots: true,
+        enableNetworkTrace: false,
+        enableScript: true
       },
       formRules: {
         name: [{ required: true, message: '请输入用例名称', trigger: 'blur' }],
@@ -760,6 +938,10 @@ export default {
         const response = await testCaseApi.getLatestExecution(testCase.id)
         if (response.data) {
           this.viewingLatestExecution = response.data
+          // 加载网络追踪数据
+          if (response.data.network_path) {
+            this.loadNetworkTrace(response.data.network_path)
+          }
           this.showExecutionResultDialog = true
         } else {
           this.$message.info('该测试用例暂无执行记录')
@@ -782,7 +964,9 @@ export default {
         await testCaseApi.batchExecute(testcaseIds, {
           model: this.executeConfig.model,
           provider: this.executeConfig.provider,
-          enable_screenshots: this.executeConfig.enableScreenshots
+          enable_screenshots: this.executeConfig.enableScreenshots,
+          enable_network_trace: this.executeConfig.enableNetworkTrace,
+          enable_script: this.executeConfig.enableScript
         })
 
         // 关闭对话框，跳转到执行记录页面
@@ -876,6 +1060,152 @@ export default {
       return ''
     },
 
+    // 获取脚本路径
+    getExecutionScriptPath(path) {
+      if (!path) return ''
+      if (path.startsWith('/')) {
+        return path
+      }
+      if (path.startsWith('screenshots')) {
+        return '/' + path
+      }
+      if (path.startsWith('http://') || path.startsWith('https://')) {
+        return path
+      }
+      return ''
+    },
+
+    // 查看回放脚本
+    async viewScript() {
+      if (!this.viewingLatestExecution || !this.viewingLatestExecution.script_path) {
+        this.$message.warning('该执行没有生成回放脚本')
+        return
+      }
+
+      this.loadingScript = true
+      this.showScriptDialog = true
+      this.viewingScript = '加载中...'
+      this.scriptExecuteResult = null
+
+      try {
+        const scriptUrl = this.getExecutionScriptPath(this.viewingLatestExecution.script_path)
+        // 静态文件挂载在 /screenshots，不走 /api/v1
+        const baseHost = window.location.origin || 'http://localhost:8080'
+        const fullUrl = baseHost + scriptUrl
+
+        const response = await fetch(fullUrl)
+        if (response.ok) {
+          this.viewingScript = await response.text()
+        } else {
+          this.viewingScript = '// 加载脚本失败'
+        }
+      } catch (error) {
+        console.error('加载脚本失败:', error)
+        this.viewingScript = '// 加载脚本失败: ' + error.message
+      } finally {
+        this.loadingScript = false
+      }
+    },
+
+    // 复制脚本到剪贴板
+    copyScript() {
+      navigator.clipboard.writeText(this.viewingScript).then(() => {
+        this.$message.success('已复制到剪贴板')
+      }).catch(() => {
+        this.$message.error('复制失败')
+      })
+    },
+
+    // 下载脚本
+    downloadScript() {
+      if (!this.viewingLatestExecution || !this.viewingLatestExecution.script_path) {
+        return
+      }
+
+      const scriptUrl = this.getExecutionScriptPath(this.viewingLatestExecution.script_path)
+      // 静态文件挂载在 /screenshots，不走 /api/v1
+      const baseHost = window.location.origin || 'http://localhost:8080'
+      const fullUrl = baseHost + scriptUrl
+
+      // 提取文件名
+      const filename = scriptUrl.split('/').pop() || 'replay.js'
+
+      // 创建下载链接
+      fetch(fullUrl)
+        .then(response => response.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = filename
+          document.body.appendChild(a)
+          a.click()
+          window.URL.revokeObjectURL(url)
+          document.body.removeChild(a)
+        })
+        .catch(() => {
+          this.$message.error('下载失败')
+        })
+    },
+
+    // 执行回放脚本
+    async executeScript() {
+      if (!this.viewingLatestExecution || !this.viewingLatestExecution.script_path) {
+        this.$message.warning('没有可执行的脚本')
+        return
+      }
+
+      try {
+        await this.$confirm(
+          '将使用 Playwright 浏览器执行此脚本，脚本执行期间请勿关闭浏览器窗口。是否继续？',
+          '确认执行',
+          { confirmButtonText: '执行', cancelButtonText: '取消', type: 'warning' }
+        )
+      } catch {
+        return  // 用户取消
+      }
+
+      this.executingScript = true
+      this.scriptExecuteResult = null
+
+      // 显示执行中提示
+      const loadingMsg = this.$message({
+        message: '脚本执行中，请耐心等待...',
+        iconClass: 'el-icon-loading',
+        duration: 0,
+        customClass: 'script-executing-msg'
+      })
+
+      try {
+        const res = await executionApi.executeScript(this.viewingLatestExecution.script_path)
+
+        // 关闭加载提示
+        loadingMsg.close()
+
+        // 响应拦截器已经解包，res 直接就是后端返回的数据
+        const data = res.data || res
+        if (data) {
+          this.scriptExecuteResult = data
+          if (data.status === 'success') {
+            this.$message.success('脚本执行成功！浏览器将自动关闭。')
+          } else if (data.status === 'timeout') {
+            this.$message.warning('脚本执行超时（120秒）')
+          } else {
+            this.$message.error('脚本执行失败，请查看下方错误信息')
+          }
+        }
+      } catch (error) {
+        this.scriptExecuteResult = {
+          status: 'error',
+          output: '',
+          error: error.response?.data?.detail || error.message || '请求失败，请检查后端服务是否正常运行'
+        }
+        this.$message.error('脚本执行请求失败')
+      } finally {
+        this.executingScript = false
+      }
+    },
+
     // 格式化动作输入
     formatActionInput(input) {
       if (!input) return ''
@@ -887,6 +1217,88 @@ export default {
       } catch {
         return String(input)
       }
+    },
+
+    // 加载网络追踪数据
+    async loadNetworkTrace(networkPath) {
+      if (!networkPath) return
+      try {
+        const baseHost = window.location.origin || 'http://localhost:8080'
+        const url = networkPath.startsWith('/') ? baseHost + networkPath : networkPath
+        const response = await fetch(url)
+        if (response.ok) {
+          this.networkTraceData = await response.json()
+        }
+      } catch (error) {
+        console.error('加载网络追踪数据失败:', error)
+      }
+    },
+
+    // 获取某个步骤的网络请求
+    getStepNetworkRequests(stepIndex) {
+      if (!this.networkTraceData || !this.networkTraceData.steps) return []
+      // 步骤索引是 0-based，network trace 中的 step_num 是 1-based
+      const stepData = this.networkTraceData.steps.find(s => s.step_num === stepIndex + 1)
+      return stepData ? stepData.requests || [] : []
+    },
+
+    // 获取有网络请求的步骤列表
+    getStepsWithNetworkRequests() {
+      if (!this.networkTraceData || !this.networkTraceData.steps) return []
+      // 过滤出有网络请求的步骤
+      return this.networkTraceData.steps.filter(step => step.total_requests && step.total_requests > 0)
+    },
+
+    // 统计 API 请求数量（is_filtered: false 的）
+    countApiRequests(requests) {
+      if (!requests) return 0
+      return requests.filter(r => !r.is_filtered).length
+    },
+
+    // 获取分类标签类型
+    getCategoryTagType(category) {
+      const typeMap = {
+        'xhr': 'danger',
+        'js': 'warning',
+        'css': 'info',
+        'image': '',
+        'font': 'info',
+        'document': 'success',
+        'media': 'warning',
+        'other': 'info'
+      }
+      return typeMap[category] || 'info'
+    },
+
+    // 获取分类标签文本
+    getCategoryLabel(category) {
+      const labelMap = {
+        'xhr': 'API',
+        'js': 'JS',
+        'css': 'CSS',
+        'image': 'IMG',
+        'font': 'Font',
+        'document': 'DOC',
+        'media': 'Media',
+        'other': 'Other'
+      }
+      return labelMap[category] || category
+    },
+
+    // 获取状态 badge 的 class
+    getStatusClass(status) {
+      if (status >= 200 && status < 300) return 'status-2xx'
+      if (status >= 300 && status < 400) return 'status-3xx'
+      if (status >= 400 && status < 500) return 'status-4xx'
+      if (status >= 500) return 'status-5xx'
+      return ''
+    },
+
+    // 查看网络请求详情
+    viewRequestDetail(req, stepIndex, reqIndex) {
+      this.selectedRequest = req
+      this.selectedRequestIndex = { stepIndex, reqIndex }
+      this.showRequestDetailDialog = true
     }
   }
 }
@@ -1081,8 +1493,254 @@ export default {
   border-radius: 4px;
 }
 
+.detail-script {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f9fafc;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.detail-script h3 {
+  margin-bottom: 10px;
+  font-size: 16px;
+  color: #606266;
+}
+
+.script-dialog-content {
+  position: relative;
+}
+
+.script-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.script-content {
+  margin: 0;
+  padding: 15px;
+  background-color: #282c34;
+  border-radius: 4px;
+  max-height: 500px;
+  overflow: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #abb2bf;
+}
+
+.script-content code {
+  color: #abb2bf;
+  background-color: transparent;
+}
+
+.script-execute-result {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f9fafc;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.script-execute-result .script-output,
+.script-execute-result .script-error {
+  margin-top: 10px;
+}
+
+.script-execute-result .script-output strong,
+.script-execute-result .script-error strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.script-execute-result .script-output pre,
+.script-execute-result .script-error pre {
+  margin: 0;
+  padding: 10px;
+  background-color: #282c34;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #abb2bf;
+  max-height: 200px;
+  overflow: auto;
+}
+
 .final-answer,
 .error-message {
   margin-top: 15px;
+}
+
+/* 网络请求展示样式 */
+.network-section {
+  margin-top: 20px;
+}
+
+.network-section h3 {
+  margin-bottom: 10px;
+  font-size: 16px;
+  color: #606266;
+}
+
+.network-list-full {
+  padding: 10px;
+}
+
+.network-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.network-summary {
+  font-size: 12px;
+  color: #909399;
+}
+
+.network-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.network-item:last-child {
+  margin-bottom: 0;
+}
+
+.method-badge {
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+  margin-right: 6px;
+  min-width: 45px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.method-get {
+  background-color: #e1f3d8;
+  color: #67c23a;
+}
+
+.method-post {
+  background-color: #ecf5ff;
+  color: #409eff;
+}
+
+.method-put,
+.method-patch {
+  background-color: #fdf6ec;
+  color: #e6a23c;
+}
+
+.method-delete {
+  background-color: #fef0f0;
+  color: #f56c6c;
+}
+
+.status-badge {
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-right: 6px;
+  min-width: 35px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.status-2xx {
+  background-color: #e1f3d8;
+  color: #67c23a;
+}
+
+.status-3xx {
+  background-color: #f4f4f5;
+  color: #909399;
+}
+
+.status-4xx {
+  background-color: #fdf6ec;
+  color: #e6a23c;
+}
+
+.status-5xx {
+  background-color: #fef0f0;
+  color: #f56c6c;
+}
+
+.request-url {
+  flex: 1;
+  color: #606266;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 200px;
+}
+
+.request-duration {
+  color: #909399;
+  font-size: 11px;
+  margin-left: 8px;
+  margin-right: 6px;
+  min-width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.step-name {
+  flex: 1;
+  color: #303133;
+  font-weight: 500;
+  margin-left: 8px;
+}
+
+/* 网络请求详情对话框样式 */
+.request-detail-dialog .detail-section {
+  margin-bottom: 20px;
+}
+
+.request-detail-dialog .detail-section h4 {
+  margin: 0 0 10px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e4e7ed;
+  font-size: 14px;
+  color: #606266;
+}
+
+.request-detail-dialog .headers-content,
+.request-detail-dialog .body-content {
+  margin: 0;
+  padding: 12px;
+  background-color: #282c34;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #abb2bf;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.request-detail-dialog .body-content {
+  max-height: 400px;
 }
 </style>

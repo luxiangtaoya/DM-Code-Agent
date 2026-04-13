@@ -7,6 +7,8 @@ import json
 import logging
 import asyncio
 import socket
+import subprocess
+import threading
 import psutil
 from datetime import datetime
 from pathlib import Path
@@ -714,13 +716,23 @@ async def batch_execute_testcases(
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # 构建执行选项 JSON
+    execution_options = json.dumps({
+        "model": request.model if hasattr(request, 'model') else "qwen3.5-flash",
+        "provider": request.provider if hasattr(request, 'provider') else "qwen",
+        "enable_screenshots": request.enable_screenshots if hasattr(request, 'enable_screenshots') else True,
+        "enable_network_trace": request.enable_network_trace if hasattr(request, 'enable_network_trace') else False,
+        "enable_script": request.enable_script if hasattr(request, 'enable_script') else True,
+    }, ensure_ascii=False)
+
     updated_count = 0
     for testcase_id in request.testcase_ids:
         cursor.execute("""
             UPDATE test_cases
-            SET status = '等待执行'
+            SET status = '等待执行',
+                execution_options = ?
             WHERE id = ?
-        """, (testcase_id,))
+        """, (execution_options, testcase_id))
         updated_count += cursor.rowcount
 
     conn.commit()
@@ -1369,6 +1381,76 @@ async def get_execution_logs():
     except Exception as e:
         logger.error(f"获取日志失败：{e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 脚本回放执行 ====================
+
+@api_router.post("/scripts/execute")
+async def execute_script(request: dict):
+    """执行 Playwright 回放脚本"""
+
+    script_path = request.get("script_path", "")
+    if not script_path:
+        raise HTTPException(status_code=400, detail="缺少 script_path 参数")
+
+    # 将相对路径转换为绝对路径
+    # 相对路径格式：/screenshots/<execution_id>/replay_xxx.js
+    if script_path.startswith("/screenshots/"):
+        abs_script_path = str(DATA_DIR) + script_path
+    else:
+        raise HTTPException(status_code=400, detail="无效的脚本路径")
+
+    # 检查文件是否存在
+    if not os.path.exists(abs_script_path):
+        raise HTTPException(status_code=404, detail=f"脚本文件不存在：{script_path}")
+
+    # 在后台线程中执行脚本，避免阻塞事件循环
+    result_holder = {"status": "running", "output": "", "error": ""}
+
+    def run_script():
+        try:
+            proc = subprocess.Popen(
+                ["node", abs_script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                cwd=str(DATA_DIR),
+            )
+            stdout, stderr = proc.communicate(timeout=120)
+            result_holder["status"] = "success" if proc.returncode == 0 else "failed"
+            result_holder["output"] = stdout
+            result_holder["error"] = stderr
+            result_holder["exit_code"] = proc.returncode
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            result_holder["status"] = "timeout"
+            result_holder["error"] = "脚本执行超时（120秒）"
+        except FileNotFoundError:
+            result_holder["status"] = "failed"
+            result_holder["error"] = "未找到 node 命令，请确保已安装 Node.js"
+        except Exception as e:
+            result_holder["status"] = "failed"
+            result_holder["error"] = str(e)
+
+    thread = threading.Thread(target=run_script, daemon=True)
+    thread.start()
+    thread.join(timeout=130)  # 主线程最多等 130 秒
+
+    if thread.is_alive():
+        return {
+            "status": "timeout",
+            "output": "",
+            "error": "脚本执行超时"
+        }
+
+    return {
+        "status": result_holder["status"],
+        "output": result_holder.get("output", ""),
+        "error": result_holder.get("error", ""),
+        "exit_code": result_holder.get("exit_code", -1)
+    }
 
 
 # ==================== 注册路由 ====================

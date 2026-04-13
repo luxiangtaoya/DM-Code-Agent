@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import sys
+import os
 import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
+
+# 支持直接运行：将 backend 目录加入 sys.path
+_backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from ..clients.base_client import BaseLLMClient
 from ..tools.base import Tool

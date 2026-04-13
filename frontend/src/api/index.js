@@ -229,6 +229,19 @@ export const executionApi = {
     return `${process.env.VUE_APP_API_BASE_URL || 'http://localhost:8080/api/v1'}/executions/${pathOrId}/gif`
   },
 
+  // 获取脚本路径 - 支持两种参数：
+  // 1. 传入 script_path（如 /screenshots/xxx/replay_xxx.js）- 直接返回完整 URL
+  // 2. 传入 executionId - 调用 API 端点获取
+  getScript(pathOrId) {
+    if (!pathOrId) return ''
+    // 如果是路径（以/开头），直接返回完整 URL
+    if (pathOrId.startsWith('/screenshots')) {
+      return (process.env.VUE_APP_API_BASE_URL || 'http://localhost:8080/api/v1') + pathOrId
+    }
+    // 否则作为 executionId 调用 API（后端需要实现对应的端点）
+    return `${process.env.VUE_APP_API_BASE_URL || 'http://localhost:8080/api/v1'}/executions/${pathOrId}/script`
+  },
+
   // 获取WebSocket URL
   getWsUrl(executionId) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -250,6 +263,11 @@ export const executionApi = {
   // 批量删除执行记录
   batchDelete(ids) {
     return request.delete('/executions', { data: { ids } })
+  },
+
+  // 执行回放脚本（超时设为 180 秒）
+  executeScript(scriptPath) {
+    return request.post('/scripts/execute', { script_path: scriptPath }, { timeout: 180000 })
   }
 }
 

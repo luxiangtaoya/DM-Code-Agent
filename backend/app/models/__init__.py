@@ -127,6 +127,8 @@ class BatchExecuteRequest(BaseModel):
     provider: str = Field(default="qwen", max_length=20)
     model: str = Field(default="qwen3.5-flash", max_length=50)
     enable_screenshots: bool = Field(default=True)
+    enable_network_trace: bool = Field(default=False)
+    enable_script: bool = Field(default=True)
 
 
 class BatchDeleteRequest(BaseModel):

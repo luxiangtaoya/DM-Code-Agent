@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from dm_agent import ReactAgent, create_llm_client, default_tools
 from dm_agent.mcp import MCPManager, load_mcp_config
 from dm_agent.screenshot import ScreenshotManager
+from dm_agent.recorders import PlaywrightRecorder, NetworkRecorder
 
 # 加载环境变量（指定 .env 文件路径）
 backend_dir = Path(__file__).parent.parent
@@ -57,8 +58,10 @@ class ExecutionResult:
     exec_status: str             # "执行通过"/"执行不通过"/"执行失败"
     steps: List[Step]            # 执行步骤列表
     gif_path: Optional[str]      # GIF 路径
+    script_path: Optional[str]   # JS 脚本路径
     final_answer: Optional[str]  # 最终答案
     error_message: Optional[str] = None  # 错误信息
+    network_path: Optional[str] = None   # 网络追踪路径
 
 
 # ==================== 全局状态 ====================
@@ -127,12 +130,28 @@ def run_agent_in_thread(
     api_key: str,
     base_url: str,
     screenshot_dir: str,
+    options: Optional[dict] = None,
 ) -> ExecutionResult:
-    """在独立线程中运行 Agent，返回 ExecutionResult"""
+    """在独立线程中运行 Agent，返回 ExecutionResult
+
+    Args:
+        options: 执行选项，如 {"enable_screenshots": True, "enable_network_trace": False, "enable_script": True}
+    """
     logger.info(f"[Agent] 开始执行：{testcase_name} (execution_id={execution_id})")
+
+    if options is None:
+        options = {}
+
+    enable_screenshots = options.get('enable_screenshots', True)
+    enable_network_trace = options.get('enable_network_trace', False)
+    enable_script = options.get('enable_script', True)
+
+    logger.info(f"[Agent] 执行选项：screenshots={enable_screenshots}, network_trace={enable_network_trace}, script={enable_script}")
 
     steps_log: List[Step] = []
     gif_path = None
+    script_path = None
+    network_path = None
 
     try:
         # 初始化资源池
@@ -145,18 +164,39 @@ def run_agent_in_thread(
 
         logger.info(f"[Agent] LLM 客户端已获取：{provider}/{model}")
 
-        # 创建截图管理器
+        # 创建截图管理器（可选）
         task_screenshot_dir = os.path.join(screenshot_dir, execution_id)
         os.makedirs(task_screenshot_dir, exist_ok=True)
 
-        screenshot_manager = ScreenshotManager(
-            output_dir=screenshot_dir,  # 直接使用 screenshots 根目录
-            enable_gif=True,
-            gif_duration=1000
-        )
-        # 使用 execution_id 作为任务ID，目录结构：screenshots/execution_id/
-        screenshot_manager.start_task(execution_id)
-        logger.info(f"[Agent] 截图管理器已初始化：{task_screenshot_dir}")
+        screenshot_manager = None
+        if enable_screenshots:
+            screenshot_manager = ScreenshotManager(
+                output_dir=screenshot_dir,
+                enable_gif=True,
+                gif_duration=1000
+            )
+            screenshot_manager.start_task(execution_id)
+
+        # 创建脚本录制器（可选）
+        script_recorder = None
+        if enable_script:
+            script_output_dir = os.path.join(screenshot_dir)
+            script_recorder = PlaywrightRecorder(output_dir=script_output_dir)
+            script_recorder.start_task(execution_id)
+
+        # 创建网络请求记录器（可选）
+        network_recorder = None
+        if enable_network_trace:
+            # project_root 使用项目根目录（backend 的父目录），因为 Playwright MCP 的 trace 文件保存在项目根目录的 .playwright-mcp/traces
+            project_root = str(backend_dir.parent)
+            logger.info(f"[Agent] 创建 NetworkRecorder：output_dir={task_screenshot_dir}, project_root={project_root}")
+            network_recorder = NetworkRecorder(
+                output_dir=task_screenshot_dir,
+                mcp_manager=pool.mcp_manager,
+                project_root=project_root
+            )
+            network_recorder.initialize()
+            logger.info(f"[Agent] NetworkRecorder 初始化完成")
 
         # 创建步骤回调函数，收集步骤信息
         def step_callback(step_num: int, step: Any) -> None:
@@ -170,6 +210,29 @@ def run_agent_in_thread(
                 raw=getattr(step, 'raw', '')
             )
             steps_log.append(step_info)
+
+            # 网络追踪：收集当前步骤的网络数据并重新启动 tracing
+            if network_recorder:
+                logger.debug(f"[Agent] step_callback: 准备收集步骤 {step_num} 的网络数据")
+                try:
+                    network_recorder.collect_and_restart(
+                        step_num,
+                        step_info.step_abbreviation or step_info.action
+                    )
+                    logger.debug(f"[Agent] step_callback: 步骤 {step_num} 网络收集完成")
+                except Exception as e:
+                    logger.error(f"[Agent] 网络追踪收集失败（步骤 {step_num}）：{e}")
+
+            # 脚本录制逻辑
+            _action = step_info.action
+            if script_recorder and PlaywrightRecorder.is_playwright_action(_action):
+                if not PlaywrightRecorder.is_snapshot_tool(_action):
+                    script_recorder.record_step(
+                        action=_action,
+                        args=step_info.action_input or {},
+                        raw_response=step_info.observation,
+                        step_description=step_info.step_abbreviation or _action
+                    )
 
             # 截图逻辑
             if screenshot_manager and pool.mcp_manager:
@@ -193,7 +256,6 @@ def run_agent_in_thread(
                                         step.step_abbreviation,
                                         base64_data
                                     )
-                                    logger.info(f"[Agent] 截图已保存：{saved_path}")
                                 except Exception as e:
                                     logger.error(f"[Agent] 截图保存失败：{e}")
                 except Exception as e:
@@ -225,17 +287,38 @@ def run_agent_in_thread(
         logger.info(f"[Agent] 开始执行任务...")
         result = agent.run(task_description)
 
+        # 网络追踪：收集最后一步的数据
+        if network_recorder and steps_log:
+            last_step = steps_log[-1]
+            logger.info(f"[Agent] 开始收集最后一步的网络数据，共 {len(steps_log)} 步")
+            network_recorder.collect_final(
+                len(steps_log),
+                last_step.step_abbreviation or last_step.action
+            )
+            network_path = network_recorder.save_results()
+            if network_path:
+                logger.info(f"[Agent] 网络追踪数据已保存到：{network_path}")
+            else:
+                logger.warning(f"[Agent] 网络追踪数据保存失败")
+
         # 生成 GIF
         if screenshot_manager:
             gif_path = screenshot_manager.finish_task()
-            logger.info(f"[Agent] GIF 已生成：{gif_path}")
+            if gif_path:
+                logger.info(f"[Agent] GIF 已生成")
+
+        # 生成回放脚本
+        if script_recorder:
+            try:
+                script_path = script_recorder.generate_replayable_script(
+                    task_name=f"{testcase_name}: {test_case.get('steps', '')}"
+                )
+                logger.info(f"[Agent] 回放脚本已生成")
+            except Exception as e:
+                logger.warning(f"[Agent] 生成回放脚本失败：{e}")
 
         # 关闭浏览器（如果 playwright 正在运行）
         close_browser_if_running(pool)
-
-        # name和steps和expected_result组成
-        
-
 
         # name和steps和expected_result组成
         task_description = f"""任务名称：{test_case.get("name", "")}
@@ -255,7 +338,9 @@ def run_agent_in_thread(
             exec_status=exec_status,
             steps=steps_log,
             gif_path=gif_path,
-            final_answer=judged_answer
+            script_path=script_path,
+            final_answer=judged_answer,
+            network_path=network_path
         )
 
     except Exception as e:
@@ -266,12 +351,21 @@ def run_agent_in_thread(
         # 关闭浏览器（即使任务失败也要清理）
         close_browser_if_running(pool)
 
+        # 尝试保存已有的网络数据
+        if network_recorder:
+            try:
+                network_path = network_recorder.save_results()
+            except Exception:
+                pass
+
         return ExecutionResult(
             exec_status="执行失败",
             steps=steps_log,
             gif_path=gif_path,
+            script_path=script_path,
             final_answer=None,
-            error_message=str(e)
+            error_message=str(e),
+            network_path=network_path
         )
 
 
@@ -402,9 +496,11 @@ def update_testcase_status(
     exec_status: str,
     steps: List[Step],
     gif_path: Optional[str] = None,
+    script_path: Optional[str] = None,
     final_answer: Optional[str] = None,
     error_message: Optional[str] = None,
-    execution_id: Optional[str] = None
+    execution_id: Optional[str] = None,
+    network_path: Optional[str] = None
 ):
     """更新测试用例状态到数据库"""
     try:
@@ -434,6 +530,34 @@ def update_testcase_status(
                 # 如果不是以 / 开头，添加 /
                 if not relative_gif_path.startswith('/'):
                     relative_gif_path = '/' + relative_gif_path
+
+        # 将脚本路径转换为相对路径（用于前端访问）
+        relative_script_path = None
+        if script_path:
+            from pathlib import Path
+            script_path_obj = Path(script_path)
+            try:
+                screenshots_idx = script_path_obj.parts.index('screenshots')
+                relative_parts = script_path_obj.parts[screenshots_idx:]
+                relative_script_path = '/' + '/'.join(relative_parts).replace('\\', '/')
+            except ValueError:
+                relative_script_path = str(script_path).replace('\\', '/')
+                if not relative_script_path.startswith('/'):
+                    relative_script_path = '/' + relative_script_path
+
+        # 将网络追踪路径转换为相对路径
+        relative_network_path = None
+        if network_path:
+            from pathlib import Path
+            network_path_obj = Path(network_path)
+            try:
+                screenshots_idx = network_path_obj.parts.index('screenshots')
+                relative_parts = network_path_obj.parts[screenshots_idx:]
+                relative_network_path = '/' + '/'.join(relative_parts).replace('\\', '/')
+            except ValueError:
+                relative_network_path = str(network_path).replace('\\', '/')
+                if not relative_network_path.startswith('/'):
+                    relative_network_path = '/' + relative_network_path
 
         # 计算耗时（独立查询，避免持有锁太久）
         duration = None
@@ -474,10 +598,12 @@ def update_testcase_status(
                 UPDATE test_cases
                 SET status = ?,
                     gif_path = ?,
+                    script_path = ?,
+                    network_path = ?,
                     tester = ?,
                     test_date = ?
                 WHERE id = ?
-            """, (exec_status, relative_gif_path, "AI", today, testcase_id))
+            """, (exec_status, relative_gif_path, relative_script_path, relative_network_path, "AI", today, testcase_id))
 
             # 立即提交以释放写锁（test_cases 的更新）
             conn.commit()
@@ -489,6 +615,8 @@ def update_testcase_status(
                     SET status = ?,
                         result = ?,
                         gif_path = ?,
+                        script_path = ?,
+                        network_path = ?,
                         error_message = ?,
                         steps_log = ?,
                         end_time = CURRENT_TIMESTAMP,
@@ -499,6 +627,8 @@ def update_testcase_status(
                     'completed' if exec_status in ['执行通过', '执行不通过'] else 'failed',
                     'passed' if exec_status == '执行通过' else 'failed',
                     relative_gif_path,
+                    relative_script_path,
+                    relative_network_path,
                     error_message,
                     steps_json,
                     duration,
@@ -512,6 +642,7 @@ def update_testcase_status(
                     SET status = ?,
                         result = ?,
                         gif_path = ?,
+                        script_path = ?,
                         error_message = ?,
                         steps_log = ?,
                         end_time = CURRENT_TIMESTAMP,
@@ -524,6 +655,7 @@ def update_testcase_status(
                     'completed' if exec_status in ['执行通过', '执行不通过'] else 'failed',
                     'passed' if exec_status == '执行通过' else 'failed',
                     relative_gif_path,
+                    relative_script_path,
                     error_message,
                     steps_json,
                     duration,
@@ -588,7 +720,7 @@ class TaskScheduler:
 
         # 查询"等待执行"的用例（按 created_at 排序，先来的先执行）
         cursor.execute("""
-            SELECT id, project_id, name, steps, expected_result, description, precondition
+            SELECT id, project_id, name, steps, expected_result, description, precondition, execution_options
             FROM test_cases
             WHERE status = '等待执行'
             ORDER BY created_at ASC
@@ -621,9 +753,26 @@ class TaskScheduler:
         self.current_task = testcase_id
 
         # 准备执行参数
+        # 读取存储的执行选项
+        exec_options = {}
+        try:
+            # 将 sqlite3.Row 转换为字典
+            testcase_dict = dict(testcase) if testcase else {}
+            options_str = testcase_dict.get('execution_options')
+            if options_str:
+                exec_options = json.loads(options_str) if isinstance(options_str, str) else options_str
+            logger.info(f"[TaskScheduler] 执行选项：{exec_options}")
+        except Exception as e:
+            logger.warning(f"[TaskScheduler] 解析执行选项失败：{e}")
+
         request = {
-            "model": "qwen3.5-flash",
-            "provider": "qwen"
+            "model": exec_options.get("model", "qwen3.5-flash"),
+            "provider": exec_options.get("provider", "qwen"),
+            "options": {
+                "enable_screenshots": exec_options.get("enable_screenshots", True),
+                "enable_network_trace": exec_options.get("enable_network_trace", False),
+                "enable_script": exec_options.get("enable_script", True),
+            }
         }
 
         try:
@@ -658,6 +807,7 @@ class TaskScheduler:
                 exec_status="执行失败",
                 steps=[],
                 gif_path=None,
+                script_path=None,
                 final_answer=None,
                 error_message=str(e),
                 execution_id=execution_id
@@ -753,6 +903,7 @@ async def execute_single_testcase(
             exec_status="执行失败",
             steps=[],
             gif_path=None,
+            script_path=None,
             final_answer=None,
             error_message="API key 未配置"
         )
@@ -771,7 +922,8 @@ async def execute_single_testcase(
         provider=request.get("provider", "qwen"),
         api_key=api_key,
         base_url=base_url,
-        screenshot_dir=screenshot_dir
+        screenshot_dir=screenshot_dir,
+        options=request.get("options", {})
     )
 
     # 更新数据库
@@ -780,9 +932,11 @@ async def execute_single_testcase(
         exec_status=result.exec_status,
         steps=result.steps,
         gif_path=result.gif_path,
+        script_path=result.script_path,
         final_answer=result.final_answer,
         error_message=result.error_message,
-        execution_id=exec_id
+        execution_id=exec_id,
+        network_path=result.network_path
     )
 
     logger.info(f"[执行] 执行完成：testcase_id={testcase_id}, status={result.exec_status}")
