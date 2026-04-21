@@ -36,7 +36,16 @@
       <el-row :gutter="20" v-loading="loading">
         <el-col :span="8" v-for="project in projects" :key="project.id">
           <div class="project-card" @click="selectProject(project)">
-            <div class="project-name">{{ project.name }}</div>
+            <div class="project-header">
+              <div class="project-name">{{ project.name }}</div>
+              <el-button
+                type="danger"
+                size="mini"
+                icon="el-icon-delete"
+                @click.stop="deleteProject(project)"
+                title="删除项目">
+              </el-button>
+            </div>
             <div class="project-desc">{{ project.description || '暂无描述' }}</div>
             <div class="project-meta">
               <span>📝 {{ project.test_case_count }} 个用例</span>
@@ -122,6 +131,43 @@ export default {
       const month = String(date.getMonth() + 1).padStart(2, '0')
       const day = String(date.getDate()).padStart(2, '0')
       return `${year}-${month}-${day}`
+    },
+
+    async deleteProject(project) {
+      // 检查是否有关联的测试用例或执行记录
+      const hasTestCases = project.test_case_count > 0
+      const hasExecutions = project.execution_count > 0
+
+      let warningMessage = ''
+      if (hasTestCases || hasExecutions) {
+        warningMessage = `⚠️ 该项目包含 ${project.test_case_count} 个测试用例和 ${project.execution_count} 条执行记录，删除后将无法恢复。`
+      } else {
+        warningMessage = '删除后将无法恢复。'
+      }
+
+      try {
+        await this.$confirm(`确认删除项目「${project.name}」吗？${warningMessage}`, '提示', {
+          confirmButtonText: '确定删除',
+          cancelButtonText: '取消',
+          type: 'warning'
+        })
+      } catch (error) {
+        // 用户取消删除
+        return
+      }
+
+      try {
+        await projectApi.delete(project.id)
+        this.$store.commit('DELETE_PROJECT', project.id)
+        this.$message.success('项目已删除')
+
+        // 如果删除的是当前选中的项目，清空选择
+        if (this.currentProject && this.currentProject.id === project.id) {
+          this.$store.dispatch('selectProject', null)
+        }
+      } catch (error) {
+        // 错误已由拦截器处理
+      }
     }
   }
 }
@@ -160,11 +206,18 @@ export default {
   box-shadow: 0 4px 16px rgba(102, 126, 234, 0.2);
 }
 
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .project-name {
   font-size: 16px;
   font-weight: 600;
   color: #333;
-  margin-bottom: 8px;
+  flex: 1;
 }
 
 .project-desc {

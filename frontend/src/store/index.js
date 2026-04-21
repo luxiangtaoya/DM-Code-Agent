@@ -37,6 +37,14 @@ export default new Vuex.Store({
       state.projects.push(project)
     },
 
+    DELETE_PROJECT(state, projectId) {
+      state.projects = state.projects.filter(p => p.id !== projectId)
+      // 如果删除的是当前选中的项目，清空选择
+      if (state.currentProject && state.currentProject.id === projectId) {
+        state.currentProject = null
+      }
+    },
+
     SET_TEST_CASES(state, testCases) {
       state.testCases = testCases
     },

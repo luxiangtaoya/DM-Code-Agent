@@ -124,11 +124,11 @@ class ScreenshotManager:
             # 创建带标注的图片列表
             images = []
 
-            for step_name, image_bytes, _ in self.screenshots:
+            for idx, (step_name, image_bytes, _) in enumerate(self.screenshots):
                 # 打开图片
                 img = Image.open(BytesIO(image_bytes))
 
-                # 添加文字标注
+                # 添加文字标注（添加步骤序号）
                 draw = ImageDraw.Draw(img)
 
                 # 计算文字位置和大小
@@ -158,8 +158,11 @@ class ScreenshotManager:
                     except:
                         font = ImageFont.load_default()
 
+                # 添加步骤序号前缀
+                step_label = f"第 {idx + 1} 步：{step_name}" if step_name else f"第 {idx + 1} 步"
+
                 # 计算文字背景框
-                text_bbox = draw.textbbox((0, 0), step_name, font=font)
+                text_bbox = draw.textbbox((0, 0), step_label, font=font)
                 text_width = text_bbox[2] - text_bbox[0]
                 text_height = text_bbox[3] - text_bbox[1]
 
@@ -175,7 +178,7 @@ class ScreenshotManager:
                 # 绘制文字
                 draw.text(
                     (box_x + padding, box_y + padding),
-                    step_name,
+                    step_label,
                     font=font,
                     fill=(255, 255, 255)
                 )

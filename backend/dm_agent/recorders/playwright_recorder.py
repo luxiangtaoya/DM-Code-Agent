@@ -148,10 +148,14 @@ class PlaywrightStep:
             if action_type == "select":
                 index = self.args.get("index", 0)
                 comment = f"  // {self.step_description}" if self.step_description else f"  // 切换到第 {index} 个标签页"
+                # 使用 pageIdx 计数器避免变量重复声明
+                page_idx = getattr(self, '_pages_var_counter', 0)
+                self._pages_var_counter = page_idx + 1
+                var_name = f'pages{page_idx if page_idx > 0 else ""}'
                 return (
                     f'{comment}\n'
-                    f'  const pages = await page.context().pages();\n'
-                    f'  page = pages[{index}];\n'
+                    f'  const {var_name} = await page.context().pages();\n'
+                    f'  page = {var_name}[{index}];\n'
                     f'  await page.waitForLoadState("domcontentloaded");\n'
                     f'  await page.waitForTimeout(1000);'
                 )
@@ -229,6 +233,7 @@ class PlaywrightRecorder:
 
         self.task_id = task_id
         self.steps = []
+        self._pages_var_counter = 0  # 重置标签页变量计数器
 
         # 创建任务目录
         task_dir = self.output_dir / task_id

@@ -5,7 +5,6 @@ import sys
 import uuid
 import json
 import logging
-import asyncio
 import socket
 import subprocess
 import threading
@@ -1552,12 +1551,9 @@ async def lifespan(app: FastAPI):
     # 2. 恢复重启前的测试用例（将"等待执行"和"执行中"重置为"待测试"）
     recover_pending_testcases()
 
-    # 3. 启动任务调度器
-    scheduler = get_task_scheduler()
-    await scheduler.start()
-
-    # 在后台运行调度器
-    asyncio.create_task(scheduler.run_loop(str(SCREENSHOT_DIR)))
+    # 3. 启动任务调度器（在独立线程中运行）
+    from app.execution_service import start_task_scheduler
+    start_task_scheduler(str(SCREENSHOT_DIR))
 
     logger.info("任务调度器已启动")
 

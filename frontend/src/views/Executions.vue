@@ -463,10 +463,35 @@ export default {
     },
 
     pollExecutionStatus(testcaseId, executionRef) {
+      // 为每个 testcase 保存一个轮询控制器，用于必要时停止轮询
+      const pollController = {
+        stopped: false,
+        maxRetries: 200, // 最大轮询次数（约 10 分钟）
+        retryCount: 0,
+        consecutiveErrors: 0,
+        maxConsecutiveErrors: 10 // 连续错误上限
+      }
+
       const poll = async () => {
+        if (pollController.stopped) return
+
+        // 检查是否超过最大轮询次数
+        if (pollController.retryCount >= pollController.maxRetries) {
+          console.warn(`轮询超过最大次数 ${pollController.maxRetries}，停止轮询：${testcaseId}`)
+          executionRef.status = '等待执行'
+          executionRef.errorMessage = '轮询超时，请刷新页面查看最新状态'
+          pollController.stopped = true
+          return
+        }
+
+        pollController.retryCount++
+
         try {
           const response = await executionApi.getTestcaseStatus(testcaseId)
           const data = response.data
+
+          // 重置连续错误计数
+          pollController.consecutiveErrors = 0
 
           // 更新显示状态（test_cases 表的状态是中文）
           executionRef.status = data.status || '等待执行'
@@ -482,6 +507,7 @@ export default {
               duration: 3000
             })
             this.loadExecutions()
+            pollController.stopped = true
           } else if (data.status === '执行不通过') {
             executionRef.result = 'failed'
             executionRef.finalAnswer = '测试不通过'
@@ -491,6 +517,7 @@ export default {
               duration: 3000
             })
             this.loadExecutions()
+            pollController.stopped = true
           } else if (data.status === '执行失败') {
             executionRef.status = 'failed'
             executionRef.result = 'failed'
@@ -501,15 +528,37 @@ export default {
               duration: 3000
             })
             this.loadExecutions()
+            pollController.stopped = true
           } else if (data.status === '执行中') {
             // 继续轮询
             setTimeout(poll, 3000)
           } else if (data.status === '待测试' || data.status === '等待执行') {
             // 继续轮询
             setTimeout(poll, 3000)
+          } else {
+            // 未知状态，继续轮询
+            console.warn(`未知状态：${data.status}，继续轮询`)
+            setTimeout(poll, 3000)
           }
         } catch (error) {
-          console.error(`轮询测试用例状态失败：${testcaseId}`, error)
+          pollController.consecutiveErrors++
+          console.error(`轮询测试用例状态失败 (${pollController.consecutiveErrors}/${pollController.maxConsecutiveErrors})：${testcaseId}`, error)
+
+          // 检查是否超过连续错误上限
+          if (pollController.consecutiveErrors >= pollController.maxConsecutiveErrors) {
+            console.error(`连续错误超过上限，停止轮询：${testcaseId}`)
+            executionRef.status = '等待执行'
+            executionRef.errorMessage = '网络错误，请刷新页面重试'
+            pollController.stopped = true
+            this.$notify.error({
+              title: '轮询失败',
+              message: `${executionRef.testcaseName} - 连续请求失败，请检查网络连接`,
+              duration: 5000
+            })
+          } else {
+            // 继续轮询
+            setTimeout(poll, 3000)
+          }
         }
       }
 

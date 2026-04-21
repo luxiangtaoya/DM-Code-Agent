@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict, field
-from threading import Thread
+import threading
 
 from dotenv import load_dotenv
 
@@ -502,7 +502,10 @@ def update_testcase_status(
     execution_id: Optional[str] = None,
     network_path: Optional[str] = None
 ):
-    """更新测试用例状态到数据库"""
+    """更新测试用例状态到数据库
+
+    使用快速提交策略，最小化数据库锁持有时间
+    """
     try:
         from app.database import get_db_connection
 
@@ -510,90 +513,23 @@ def update_testcase_status(
         steps_json = json.dumps([asdict(step) for step in steps], ensure_ascii=False) if steps else "[]"
 
         # 将 GIF 路径转换为相对路径（用于前端访问）
-        # 原始路径：E:\data\competition\DM-Code-Agent\backend\data\screenshots\<execution_id>\task_animation.gif
-        # 相对路径：/screenshots/<execution_id>/task_animation.gif
-        relative_gif_path = None
-        if gif_path:
-            # 使用 Path 处理路径，统一使用正斜杠
-            from pathlib import Path
-            gif_path_obj = Path(gif_path)
-            # 查找 screenshots 目录
-            try:
-                screenshots_idx = gif_path_obj.parts.index('screenshots')
-                # 从 screenshots 开始截取
-                relative_parts = gif_path_obj.parts[screenshots_idx:]
-                # 拼接路径，确保以 / 开头
-                relative_gif_path = '/' + '/'.join(relative_parts).replace('\\', '/')
-            except ValueError:
-                # 如果找不到 screenshots，直接使用原路径（转换分隔符）
-                relative_gif_path = str(gif_path).replace('\\', '/')
-                # 如果不是以 / 开头，添加 /
-                if not relative_gif_path.startswith('/'):
-                    relative_gif_path = '/' + relative_gif_path
-
-        # 将脚本路径转换为相对路径（用于前端访问）
-        relative_script_path = None
-        if script_path:
-            from pathlib import Path
-            script_path_obj = Path(script_path)
-            try:
-                screenshots_idx = script_path_obj.parts.index('screenshots')
-                relative_parts = script_path_obj.parts[screenshots_idx:]
-                relative_script_path = '/' + '/'.join(relative_parts).replace('\\', '/')
-            except ValueError:
-                relative_script_path = str(script_path).replace('\\', '/')
-                if not relative_script_path.startswith('/'):
-                    relative_script_path = '/' + relative_script_path
-
-        # 将网络追踪路径转换为相对路径
-        relative_network_path = None
-        if network_path:
-            from pathlib import Path
-            network_path_obj = Path(network_path)
-            try:
-                screenshots_idx = network_path_obj.parts.index('screenshots')
-                relative_parts = network_path_obj.parts[screenshots_idx:]
-                relative_network_path = '/' + '/'.join(relative_parts).replace('\\', '/')
-            except ValueError:
-                relative_network_path = str(network_path).replace('\\', '/')
-                if not relative_network_path.startswith('/'):
-                    relative_network_path = '/' + relative_network_path
-
-        # 计算耗时（独立查询，避免持有锁太久）
-        duration = None
-        if execution_id:
-            conn_calc = get_db_connection()
-            cursor_calc = conn_calc.cursor()
-            cursor_calc.execute("SELECT start_time FROM test_executions WHERE id = ?", (execution_id,))
-            row = cursor_calc.fetchone()
-            conn_calc.close()
-            if row and row['start_time']:
-                try:
-                    from datetime import datetime
-                    start_str = str(row['start_time'])
-                    # 处理各种时间格式
-                    if 'T' in start_str:
-                        start_str = start_str.replace('T', ' ').replace('Z', '')
-                    if '.' in start_str:
-                        start_str = start_str.split('.')[0]
-                    start = datetime.strptime(start_str, '%Y-%m-%d %H:%M:%S')
-                    # 使用 utcnow() 与 start_time 的 UTC 时间一致
-                    duration = int((datetime.utcnow() - start).total_seconds())
-                    logger.debug(f"[DB] 计算耗时：start={start}, now_utc={datetime.utcnow()}, duration={duration}s")
-                except Exception as e:
-                    logger.warning(f"[DB] 计算耗时失败：{e}")
-                    duration = None
+        relative_gif_path = _convert_to_relative_path(gif_path, 'screenshots')
+        relative_script_path = _convert_to_relative_path(script_path, 'screenshots')
+        relative_network_path = _convert_to_relative_path(network_path, 'screenshots')
 
         # 获取当前日期
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
+
+        # 计算耗时（独立查询，避免持有锁太久）
+        duration = _calculate_duration(execution_id)
 
         # 使用事务快速更新
         conn = get_db_connection()
         cursor = conn.cursor()
 
         try:
-            # 先更新 test_cases 表
+            # 先更新 test_cases 表（快速提交）
             cursor.execute("""
                 UPDATE test_cases
                 SET status = ?,
@@ -604,9 +540,7 @@ def update_testcase_status(
                     test_date = ?
                 WHERE id = ?
             """, (exec_status, relative_gif_path, relative_script_path, relative_network_path, "AI", today, testcase_id))
-
-            # 立即提交以释放写锁（test_cases 的更新）
-            conn.commit()
+            conn.commit()  # 立即提交 test_cases 更新
 
             # 然后更新 test_executions 表
             if execution_id:
@@ -662,8 +596,7 @@ def update_testcase_status(
                     final_answer,
                     testcase_id
                 ))
-
-            conn.commit()
+            conn.commit()  # 提交 test_executions 更新
 
         except Exception as e:
             conn.rollback()
@@ -675,6 +608,51 @@ def update_testcase_status(
 
     except Exception as e:
         logger.error(f"[DB] 更新测试用例状态失败：{e}")
+
+
+def _convert_to_relative_path(file_path: Optional[str], base_dir: str) -> Optional[str]:
+    """将绝对路径转换为相对路径"""
+    if not file_path:
+        return None
+
+    from pathlib import Path
+    path_obj = Path(file_path)
+    try:
+        base_idx = path_obj.parts.index(base_dir)
+        relative_parts = path_obj.parts[base_idx:]
+        relative_path = '/' + '/'.join(relative_parts).replace('\\', '/')
+        return relative_path
+    except (ValueError, IndexError):
+        return str(file_path).replace('\\', '/')
+
+
+def _calculate_duration(execution_id: Optional[str]) -> Optional[int]:
+    """计算执行耗时（独立查询，不持有锁）"""
+    if not execution_id:
+        return None
+
+    try:
+        from app.database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT start_time FROM test_executions WHERE id = ?", (execution_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and row['start_time']:
+            from datetime import datetime
+            start_str = str(row['start_time'])
+            if 'T' in start_str:
+                start_str = start_str.replace('T', ' ').replace('Z', '')
+            if '.' in start_str:
+                start_str = start_str.split('.')[0]
+            start = datetime.strptime(start_str, '%Y-%m-%d %H:%M:%S')
+            duration = int((datetime.utcnow() - start).total_seconds())
+            return duration
+    except Exception as e:
+        logger.warning(f"[DB] 计算耗时失败：{e}")
+
+    return None
 
 
 # ==================== 任务调度器 ====================
@@ -820,6 +798,7 @@ class TaskScheduler:
 
 # 全局调度器实例
 _task_scheduler = None
+_scheduler_thread = None  # 调度器运行线程
 
 
 def get_task_scheduler():
@@ -831,17 +810,31 @@ def get_task_scheduler():
 
 
 def start_task_scheduler(screenshot_dir: str):
-    """启动任务调度器"""
+    """在独立线程中启动任务调度器（不阻塞主线程）"""
+    global _scheduler_thread
+
     scheduler = get_task_scheduler()
 
-    async def start():
-        await scheduler.start()
-        await scheduler.run_loop(screenshot_dir)
+    def run_in_thread():
+        """在线程中运行异步调度器"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    # 在后台运行
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start())
+        async def start():
+            await scheduler.start()
+            await scheduler.run_loop(screenshot_dir)
+
+        try:
+            loop.run_until_complete(start())
+        except Exception as e:
+            logger.error(f"[TaskScheduler] 线程运行异常：{e}")
+        finally:
+            loop.close()
+
+    # 在后台线程启动
+    _scheduler_thread = threading.Thread(target=run_in_thread, daemon=True)
+    _scheduler_thread.start()
+    logger.info("[TaskScheduler] 已在后台线程启动")
 
 
 # ==================== API 函数 ====================
